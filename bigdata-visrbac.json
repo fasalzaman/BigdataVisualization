@@ -1,0 +1,22 @@
+{
+    "Name": "custom role for bigdata-vis",
+    "Id": "fb99bac5-5d10-4a50-a6fc-b2d30fa026f5",
+    "IsCustom": true,
+    "Description": "Bigdata and visualization Custom Role",
+    "Actions": [
+        "Microsoft.Authorization/*/read",
+        "Microsoft.Resources/deployments/*",
+        "Microsoft.Resources/subscriptions/resourceGroups/read",
+        "Microsoft.DataFactory/dataFactories/*",
+        "Microsoft.Web/*",
+        "Microsoft.Storage/*",
+        "Microsoft.Network/*",
+        "Microsoft.Compute/*",
+        "Microsoft.MachineLearning/*"
+    ],
+    "NotActions": [
+
+    ],
+    "AssignableScopes": [    
+    ]
+}

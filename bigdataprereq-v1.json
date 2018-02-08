@@ -1,0 +1,386 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vmUserLoginName": {
+        "type": "string"
+        },
+        "vmUserLoginPassword": {
+        "type": "securestring"
+        },
+        "clusterName": {
+        "type": "string"
+        },
+        "clusterLoginUserName": {
+        "type": "string"
+        },
+        "clusterLoginPassword": {
+        "type": "securestring"
+        },
+        "mlOwnerEmail": {
+        "type": "string"
+        }
+    },
+    "variables": {
+        "publicIpAddressType":"Dynamic",
+        "networkSecurityGroupName":"[concat(variables('virtualMachineName'),'-nsg')]",
+        "publicIpAddressName":"[concat(variables('virtualMachineName'),'-pip')]",
+        "subnetPrefix":"10.0.0.0/24",
+        "subnetName":"labvm-subnet",
+        "addressPrefix":"10.0.0.0/24",
+        "virtualNetworkName":"[concat(variables('virtualMachineName'),'-vnet')]",
+        "networkInterfaceName":"[concat(variables('virtualMachineName'),'-nic')]",
+        "virtualMachineName": "labvm",
+        "virtualMachineSize":"Standard_DS3_v2",
+        "vmDnsName": "[concat('vmdns',uniqueString(resourceGroup().id))]",
+        "vmStorageAccountType":"Standard_LRS",
+        "clusterStorageAccountName": "[concat(uniquestring(resourceGroup().id),'sparkstrg')]",
+        "mlStorageAccountName": "[concat('mlstr',uniquestring(resourceGroup().id))]",
+        "mlLocation": "southcentralus",
+        "clusterWorkerNodeCount": 3,
+        "clusterVNetName": "[concat(parameters('clusterName'),'-vnet')]",
+        "clusterVNetAddressSpace": "10.0.0.0/16",
+        "clusterVNetSubnetName": "default",
+        "clusterVNetSubnetAddressRange": "10.0.0.0/24",
+        "mlWorkspaceName": "[concat('ml',uniquestring(resourceGroup().id))]",
+        "mlResourceId": "[resourceId('Microsoft.MachineLearning/workspaces', variables('mlWorkspaceName'))]",
+        "mlStorageResourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('mlStorageAccountName'))]",
+        "sshUserName": "sshuser",
+        "sshPassword": "Abc!1234567890"
+    },
+    "resources": [
+        {
+            "name": "[variables('virtualNetworkName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2017-08-01",
+            "location": "[resourceGroup().location]",
+             "dependsOn": [
+                "[concat('Microsoft.Network/networkSecurityGroups/',variables('networkSecurityGroupName'))]"
+            ],
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('addressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetPrefix')]"
+                        }
+                    }
+                ]
+            }
+        },
+         {
+            "name": "[variables('publicIpAddressName')]",
+            "type": "Microsoft.Network/publicIpAddresses",
+            "apiVersion": "2017-08-01",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Basic"
+            },
+            "properties": {
+                "publicIpAllocationMethod": "[variables('publicIpAddressType')]",
+                 "dnsSettings": {
+                    "domainNameLabel": "[variables('vmDnsName')]"
+                }
+            }
+        },
+        {
+            "name": "[variables('networkSecurityGroupName')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-06-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "Jupyter",
+                        "properties": {
+                            "priority": 1010,
+                            "protocol": "TCP",
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "9999"
+                        }
+                    },
+                    {
+                        "name": "MSSQL",
+                        "properties": {
+                            "priority": 1020,
+                            "protocol": "TCP",
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "1433"
+                        }
+                    },
+                    {
+                        "name": "default-allow-rdp",
+                        "properties": {
+                            "priority": 1030,
+                            "protocol": "TCP",
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "3389"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[variables('networkInterfaceName')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "apiVersion": "2016-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[concat('Microsoft.Network/publicIpAddresses/', variables('publicIpAddressName'))]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "subnet": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets/', variables('virtualNetworkName'), variables('subnetName'))]"
+                            },
+                            "privateIPAllocationMethod": "Dynamic",
+                            "publicIpAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIpAddresses', variables('publicIpAddressName'))]"
+                            }
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName'))]"
+                }
+            }
+        },
+        {
+            "name": "[variables('virtualMachineName')]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2016-04-30-preview",
+            "location": "[resourceGroup().location]",
+            "plan": {
+                "name": "windows2016byol",
+                "publisher": "microsoft-ads",
+                "product": "windows-data-science-vm"
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterfaceName'))]"
+                ],
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('virtualMachineName')]",
+                    "adminUsername": "[parameters('vmUserLoginName')]",
+                    "adminPassword": "[parameters('vmUserLoginPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVmAgent": "true"
+                    }
+                },
+                "hardwareProfile": {
+                    "vmSize": "[variables('virtualMachineSize')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "microsoft-ads",
+                        "offer": "windows-data-science-vm",
+                        "sku": "windows2016byol",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "[variables('vmStorageAccountType')]"
+                        }
+                    },
+                    "dataDisks": []
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "[variables('clusterStorageAccountName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2016-01-01",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "dependsOn": [],
+            "kind": "Storage"
+        },
+        {
+            "name": "[variables('mlStorageAccountName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "location": "[variables('mlLocation')]",
+            "apiVersion": "2016-01-01",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "dependsOn": [],
+            "kind": "Storage"
+        },
+        {
+            "name": "[variables('mlWorkspaceName')]",
+            "type": "Microsoft.MachineLearning/workspaces",
+            "location": "[variables('mlLocation')]",
+            "apiVersion": "2016-04-01",
+            "dependsOn": [
+                "[variables('mlStorageResourceId')]"
+            ],
+            "properties": {
+                "UserStorageAccountId": "[variables('mlStorageResourceId')]",
+                "ownerEmail": "[parameters('mlOwnerEmail')]"
+            }
+        },
+        {
+            "name": "[variables('clusterVNetName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-06-15",
+            "dependsOn": [],
+            "tags": {},
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('clusterVNetAddressSpace')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('clusterVNetSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('clusterVNetSubnetAddressRange')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[parameters('clusterName')]",
+            "type": "Microsoft.HDInsight/clusters",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-03-01-preview",
+            "dependsOn": [
+                "[concat('Microsoft.Storage/storageAccounts/',variables('clusterStorageAccountName'))]",
+                "[concat('Microsoft.Network/virtualNetworks/',variables('clusterVNetName'))]"
+            ],
+            "properties": {
+                "clusterVersion": "3.6",
+                "osType": "Linux",
+                "tier": "standard",
+                "clusterDefinition": {
+                    "kind": "Spark",
+                    "componentVersion": {
+                        "Spark": "2.1"
+                    },
+                    "configurations": {
+                        "gateway": {
+                            "restAuthCredential.isEnabled": true,
+                            "restAuthCredential.username": "[parameters('clusterLoginUserName')]",
+                            "restAuthCredential.password": "[parameters('clusterLoginPassword')]"
+                        }
+                    }
+                },
+                "storageProfile": {
+                    "storageaccounts": [
+                        {
+                            "name": "[concat(variables('clusterStorageAccountName'),'.blob.core.windows.net')]",
+                            "isDefault": true,
+                            "container": "sparkcontainer",
+                            "key": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('clusterStorageAccountName')), '2016-01-01').keys[0].value]"
+                        }
+                    ]
+                },
+                "computeProfile": {
+                    "roles": [
+                        {
+                            "name": "headnode",
+                            "targetInstanceCount": 2,
+                            "hardwareProfile": {
+                                "vmSize": "Standard_D12_V2"
+                            },
+                            "osProfile": {
+                                "linuxOperatingSystemProfile": {
+                                    "username": "[variables('sshUserName')]",
+                                    "password": "[variables('sshPassword')]"
+                                }
+                            },
+                            "virtualNetworkProfile": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('clusterVNetName'))]",
+                                "subnet": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('clusterVNetName')), '/subnets/', variables('clusterVNetSubnetName'))]"
+                            }
+                        },
+                        {
+                            "name": "workernode",
+                            "minInstanceCount": 1,
+                            "targetInstanceCount": "[variables('clusterWorkerNodeCount')]",
+                            "hardwareProfile": {
+                                "vmSize": "Standard_D12_V2"
+                            },
+                            "osProfile": {
+                                "linuxOperatingSystemProfile": {
+                                    "username": "[variables('sshUserName')]",
+                                    "password": "[variables('sshPassword')]"
+                                }
+                            },
+                            "virtualNetworkProfile": {
+                                "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('clusterVNetName'))]",
+                                "subnet": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('clusterVNetName')), '/subnets/', variables('clusterVNetSubnetName'))]"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outputs": {
+         "vmDnsName": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses',variables('publicIpAddressName'))).dnsSettings.fqdn]"
+        },
+        "vmUsername": {
+            "type": "string",
+            "value": "[parameters('vmUserLoginName')]"
+        },
+         "vmPassword": {
+            "type": "string",
+            "value": "[parameters('vmUserLoginPassword')]"
+        },
+         "hdInsightClusterUsername": {
+            "type": "string",
+            "value": "[parameters('clusterLoginUserName')]"
+        },
+         "hdInsightClusterPassword": {
+            "type": "string",
+            "value": "[parameters('clusterLoginPassword')]"
+        },
+         "hdInsightSSHUserName": {
+            "type": "string",
+            "value": "[concat(variables('sshUserName'),'@',parameters('clusterName'),'-ssh.azurehdinsight.net')]"
+        },
+         "hdInsightSSHPassword": {
+            "type": "string",
+            "value": "[variables('sshPassword')]"
+        }
+    }
+}
